@@ -9,11 +9,18 @@ Supports both single-file and partitioned storage for scalability.
 import polars as pl
 from pathlib import Path
 from typing import Optional, List, Tuple
-from krapivin_hash_rs import PyLSHIndex
+
+# Optional Rust bindings (only needed for saving, not loading)
+try:
+    from krapivin_hash_rs import PyLSHIndex
+    HAS_RUST_BINDINGS = True
+except ImportError:
+    PyLSHIndex = None
+    HAS_RUST_BINDINGS = False
 
 
 def save_index_to_parquet(
-    index: PyLSHIndex,
+    index,
     path: str,
     compression: str = 'zstd'
 ) -> None:
@@ -30,6 +37,9 @@ def save_index_to_parquet(
         >>> # ... add embeddings ...
         >>> save_index_to_parquet(index, "index.parquet")
     """
+    if not HAS_RUST_BINDINGS:
+        raise RuntimeError("save_index_to_parquet requires krapivin_hash_rs module")
+
     # Export all data from Rust
     records = index.export_data()
 
@@ -48,7 +58,7 @@ def save_index_to_parquet(
 
 
 def save_index_partitioned(
-    index: PyLSHIndex,
+    index,
     base_path: str,
     num_partitions: int = 16,
     compression: str = 'zstd'
@@ -68,6 +78,9 @@ def save_index_partitioned(
         >>> save_index_partitioned(index, "index_parts/", num_partitions=16)
         >>> # Creates: index_parts/partition_00.parquet, partition_01.parquet, ...
     """
+    if not HAS_RUST_BINDINGS:
+        raise RuntimeError("save_index_partitioned requires krapivin_hash_rs module")
+
     base = Path(base_path)
     base.mkdir(exist_ok=True, parents=True)
 
