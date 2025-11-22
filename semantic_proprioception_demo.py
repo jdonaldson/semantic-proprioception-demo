@@ -418,16 +418,19 @@ def render_sidebar():
 
     # Dataset selection
     st.sidebar.subheader("Dataset")
-    dataset = st.sidebar.radio(
+
+    dataset_options = {
+        "📱 Twitter Customer Support": "twitter",
+        "📚 ArXiv Research Papers": "arxiv",
+        "💬 Hacker News": "hackernews"
+    }
+
+    dataset_display = st.sidebar.selectbox(
         "Choose dataset",
-        options=["twitter", "arxiv", "hackernews"],
-        format_func=lambda x: {
-            "twitter": "📱 Twitter Customer Support",
-            "arxiv": "📚 ArXiv Research Papers",
-            "hackernews": "💬 Hacker News"
-        }[x],
+        options=list(dataset_options.keys()),
         help="Compare how themes emerge in different domains"
     )
+    dataset = dataset_options[dataset_display]
 
     st.sidebar.markdown("---")
 
