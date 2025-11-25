@@ -167,7 +167,7 @@
 \title{Semantic Proprioception: Self-Aware Embedding Spaces via LSH
 Density Analysis}
 \author{J. Justin Donaldson}
-\date{2025-11-24}
+\date{2025-11-25}
 \begin{document}
 \maketitle
 \begin{abstract}
@@ -870,16 +870,17 @@ multiplication, enabling real-time adaptive granularity based on bucket
 density. This could enable multi-resolution theme analysis: coarse
 buckets for high-level categories, fine sub-buckets for specific topics.
 
-\textbf{Multi-probe LSH for search}: Standard LSH suffers from low recall
-(~4\%) because similar items don't always hash to the same bucket. We
-tested multi-probe LSH \autocite{lv2007multiprobe}, which checks nearby buckets
-by flipping hash bits. On Twitter data (1,000 tweets, MiniLM-L6), 2-bit
-flipping achieves 46\% recall@10 while scanning only 17\% of the dataset
-(14× speedup vs brute force). Key finding: uniform bit ordering (0,1,2,...)
-outperforms discriminative bit selection by 37.5\%, as Hamming distance
-matters more than which specific bits differ. Query complexity analysis
-shows bit flipping costs <6\% of query time—the real cost is similarity
-computation (70\%), which scales with candidates found.
+\textbf{Multi-probe LSH for search}: Standard LSH suffers from low
+recall (\textasciitilde4\%) because similar items don't always hash to
+the same bucket. We tested multi-probe LSH \autocite{lv2007multiprobe},
+which checks nearby buckets by flipping hash bits. On Twitter data
+(1,000 tweets, MiniLM-L6), 2-bit flipping achieves 46\% recall@10 while
+scanning only 17\% of the dataset (14× speedup vs brute force). Key
+finding: uniform bit ordering (0,1,2,\ldots) outperforms discriminative
+bit selection by 37.5\%, as Hamming distance matters more than which
+specific bits differ. Query complexity analysis shows bit flipping costs
+\textless6\% of query time---the real cost is similarity computation
+(70\%), which scales with candidates found.
 
 \textbf{Other directions}: - \textbf{Dynamic thresholds}: Automatically
 adjust density cutoff based on corpus statistics -
