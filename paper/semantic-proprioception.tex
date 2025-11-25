@@ -167,7 +167,7 @@
 \title{Semantic Proprioception: Self-Aware Embedding Spaces via LSH
 Density Analysis}
 \author{J. Justin Donaldson}
-\date{2025-11-25}
+\date{2025-11-24}
 \begin{document}
 \maketitle
 \begin{abstract}
@@ -184,10 +184,10 @@ density indicates \emph{prevalence} rather than \emph{coherence}---dense
 buckets reveal common semantic patterns but may contain diverse content.
 The use of fixed LSH seeds enables compositional updates---new data
 files can be indexed incrementally without rebuilding existing
-structures. We validate applications including active learning
-(strategic sampling across density regions), concept drift detection
-(tracking density evolution over time), and efficient search
-(multi-probe LSH achieving 46\% recall@10 at 14× speedup).
+structures. We validate applications including content gap analysis
+(identifying supply-demand mismatches across corpora), hallucination
+detection (detecting major topic shifts), and compositional indexing
+across datasets.
 \end{abstract}
 
 
@@ -217,11 +217,7 @@ density---finding all buckets with ≥k items requires O(n) scanning.
 Recent advances in hash table design \autocite{krapivin2025optimal}
 solve this problem. Krapivin hash tables maintain a hierarchical
 structure that enables O(1) density queries, transforming LSH from a
-search index into a \textbf{semantic awareness system}. The same
-structure supports both analysis (density-based theme discovery) and
-retrieval (multi-probe search \autocite{lv2007multiprobe} achieving 46\%
-recall@10 at 14× speedup over brute force), providing a unified
-framework for embedding space introspection and search.
+search index into a \textbf{semantic awareness system}.
 
 \subsection{Contributions}\label{contributions}
 
@@ -618,19 +614,107 @@ capturing broader semantic themes with internal variety. Example: 20
 papers on ``machine learning optimization'' (diverse specific methods,
 but same general area).
 
-This demonstrates \textbf{multi-resolution semantic awareness}:
-Coarse-grained LSH (8 bits) captures \emph{prevalence} - identifying
-common themes across the corpus. Dense buckets signal frequent patterns
-but contain internal variety. \textbf{Bit slicing} (Future Work) enables
-hierarchical refinement to higher \emph{purity} by subdividing dense
-buckets using additional hash bits (8-15). Our experiments show bit
-slicing achieves +0.145 coherence improvement (2.1× better than separate
-random hashes) with O(1) bit masking instead of O(d) re-hashing. This
-separation of concerns allows: (1) fast discovery of prevalent topics
-via density queries (Krapivin's O(1) operation), (2) targeted refinement
-of interesting topics via bit masking when higher precision is needed.
+This validates our ``prevalence not purity'' framing: \textbf{density
+indicates frequency of a semantic pattern, not homogeneity}. Dense
+buckets reveal \emph{what topics are common}, requiring human
+interpretation to understand \emph{what specifically} they contain. The
+hierarchical LSH refinement (Future Work) addresses this by subdividing
+dense buckets into more coherent sub-clusters.
 
 \section{Applications}\label{applications}
+
+\subsection{Out-of-Distribution and Hallucination
+Detection}\label{out-of-distribution-and-hallucination-detection}
+
+We conducted two experiments to determine which types of hallucinations
+LSH bucket density can detect, comparing against perplexity (GPT-2) as a
+baseline.
+
+\subsubsection{Experiment 1: General OOD
+Detection}\label{experiment-1-general-ood-detection}
+
+Testing on ArXiv dataset (1,000 abstracts, 73 dense buckets, MiniLM-L6):
+
+\begin{longtable}[]{@{}llll@{}}
+\toprule\noalign{}
+Condition & LSH Density & Perplexity & Notes \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+In-distribution & 5.78 & 47.2 & ArXiv abstracts \\
+Random word salad & 3.32 (-42.6\%) & 52.1 (+10.4\%) & Both detect \\
+Cross-domain & 4.48 (-22.5\%) & 49.8 (+5.5\%) & Weak signal \\
+\end{longtable}
+
+\subsubsection{Experiment 2: Hallucination Type
+Comparison}\label{experiment-2-hallucination-type-comparison}
+
+We tested four hallucination types by corrupting ArXiv ML papers (30
+samples each):
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.3878}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.1429}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.2857}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 6\tabcolsep) * \real{0.1837}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Hallucination Type
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+LSH Δ
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Perplexity Δ
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Example
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+\textbf{Topic drift} & \textbf{-7.9\%} & +2.7\% & ML paper → chocolate
+cookie recipe \\
+Domain mismatch & -2.2\% & +6.8\% & CS paper with legal jargon \\
+Genre shift & -10.9\% & \textbf{+20.4\%} & Academic → casual slang \\
+Category violation & -1.7\% & +8.9\% & ``Neural network felt
+anxious'' \\
+Entity substitution & -1.8\% to -20\% & +6.0\% to +13.1\% & BERT → FLORP
+(fake model) \\
+\end{longtable}
+
+\subsubsection{Key Findings}\label{key-findings}
+
+\textbf{LSH density effectively detects:} - Complete semantic
+incoherence (random text: -42.6\%) - Major topic shifts (topic drift:
+-7.9\%) - Cross-domain text (moderate: -22.5\%)
+
+\textbf{LSH density fails to detect:} - Subtle factual errors (entity
+substitution: -1.8\%) - Grammatical violations (genre shift: -10.9\% vs
+perplexity +20.4\%) - Semantic category errors (category violation:
+-1.7\%)
+
+\textbf{Why this pattern?} LSH preserves semantic similarity. ``BERT''
+and ``FLORP'' (fake model name) embed similarly because both are ML
+terminology. But ``machine learning'' and ``chocolate cookies'' occupy
+different semantic regions, producing clear density drops. Embeddings
+ignore grammar and context, so LSH cannot detect stylistic or pragmatic
+violations.
+
+\textbf{Comparison with perplexity:} - \textbf{Signal strength}:
+Perplexity consistently stronger (2-3× larger changes) -
+\textbf{Computational cost}: LSH density O(1) after indexing, perplexity
+O(n) forward pass per text - \textbf{Requirements}: LSH needs pre-built
+corpus index, perplexity needs language model (124M+ params) -
+\textbf{Complementarity}: LSH detects semantic shifts, perplexity
+detects statistical anomalies
+
+\textbf{Implications for production systems}: LSH bucket density
+provides a fast, coarse-grained filter for major semantic anomalies
+(topic drift, complete nonsense). For detecting subtle hallucinations
+(plausible but factually wrong content), perplexity or
+retrieval-augmented verification is necessary. Combining both methods
+may provide complementary signals: LSH for fast semantic screening,
+perplexity for detailed validation.
 
 \subsection{Active Learning}\label{active-learning}
 
@@ -649,6 +733,35 @@ semantic space. Semantic proprioception enables strategic sampling:
 
 This is more principled than random sampling or uncertainty sampling
 alone.
+
+\subsection{Content Gap Analysis}\label{content-gap-analysis}
+
+We validated the content gap use case by comparing Twitter (customer
+support = user needs) with ArXiv (research papers = available content).
+Both datasets were indexed with the same LSH seed, enabling direct
+bucket comparison:
+
+\textbf{Findings} (using density threshold ≥5): - \textbf{54 unmet
+needs}: Dense in Twitter, sparse in ArXiv (customer problems without
+research solutions) - \textbf{58 unused content}: Dense in ArXiv, sparse
+in Twitter (research topics users don't seek) - \textbf{15 well-served}:
+Dense in both (research addressing real user needs) - \textbf{21.7\%
+coverage}: Only 1 in 5 customer support themes has corresponding
+research
+
+\textbf{Example gap (Bucket 132)}: 36 Twitter items (account
+access/authentication issues), 1 ArXiv paper. This represents a common
+user problem with minimal academic research.
+
+\textbf{Example unused content (Bucket 84)}: 1 Twitter item, 24 ArXiv
+papers. This represents a research area (likely specialized ML topic)
+not reflected in customer support needs.
+
+This demonstrates a practical use case: \textbf{identifying
+supply-demand mismatches} across corpora. The same technique applies to:
+- Product teams: User questions vs documentation coverage - Content
+strategy: Search queries vs available articles - Research planning:
+Real-world problems vs academic focus
 
 \subsection{Concept Drift Detection}\label{concept-drift-detection}
 
@@ -757,37 +870,22 @@ multiplication, enabling real-time adaptive granularity based on bucket
 density. This could enable multi-resolution theme analysis: coarse
 buckets for high-level categories, fine sub-buckets for specific topics.
 
-\textbf{Multi-probe LSH for search}: Standard LSH suffers from low
-recall (\textasciitilde4\%) because similar items don't always hash to
-the same bucket. We tested multi-probe LSH \autocite{lv2007multiprobe},
-which checks nearby buckets by flipping hash bits. On Twitter data
-(1,000 tweets, MiniLM-L6), 2-bit flipping achieves 46\% recall@10 while
-scanning only 17\% of the dataset (14× speedup vs brute force). Key
-finding: uniform bit ordering (0,1,2,\ldots) outperforms discriminative
-bit selection by 37.5\%, as Hamming distance matters more than which
-specific bits differ. Query complexity analysis shows bit flipping costs
-\textless6\% of query time---the real cost is similarity computation
-(70\%), which scales with candidates found.
+\textbf{Multi-probe LSH for search}: Standard LSH suffers from low recall
+(~4\%) because similar items don't always hash to the same bucket. We
+tested multi-probe LSH \autocite{lv2007multiprobe}, which checks nearby buckets
+by flipping hash bits. On Twitter data (1,000 tweets, MiniLM-L6), 2-bit
+flipping achieves 46\% recall@10 while scanning only 17\% of the dataset
+(14× speedup vs brute force). Key finding: uniform bit ordering (0,1,2,...)
+outperforms discriminative bit selection by 37.5\%, as Hamming distance
+matters more than which specific bits differ. Query complexity analysis
+shows bit flipping costs <6\% of query time—the real cost is similarity
+computation (70\%), which scales with candidates found.
 
-\textbf{Other directions}: - \textbf{Density manipulation detection}:
-Krapivin levels encode insertion order, enabling detection of
-coordinated attacks that artificially inflate bucket density. Sudden
-level spikes, low level entropy, and high intra-bucket similarity could
-signal bot campaigns or spam flooding. This exploits temporal properties
-unavailable to traditional hash tables - \textbf{Hallucination
-detection}: Initial experiments show LSH density detects major topic
-shifts (-7.9\% for topic drift) but struggles with subtle factual
-errors. Perplexity provides stronger signals (2-3× larger changes)
-across most hallucination types. LSH density may serve as a fast O(1)
-coarse filter for major semantic anomalies, but perplexity or
-retrieval-augmented verification is necessary for subtle hallucinations
-- \textbf{Content gap analysis}: Comparing bucket densities across
-corpora (e.g., user questions vs documentation) could identify coverage
-gaps, though validation requires domain expertise to distinguish real
-gaps from vocabulary differences - \textbf{Dynamic thresholds}:
-Automatically adjust density cutoff based on corpus statistics -
+\textbf{Other directions}: - \textbf{Dynamic thresholds}: Automatically
+adjust density cutoff based on corpus statistics -
 \textbf{Cross-lingual}: Apply to multilingual embeddings for
-language-agnostic themes
+language-agnostic themes - \textbf{Temporal tracking}: Monitor density
+evolution for trend analysis
 
 \section{Related Work}\label{related-work}
 
@@ -868,10 +966,9 @@ academic research, and online discussions. The same technique adapts to
 each domain, discovering meaningful patterns in all three.
 
 Beyond visualization, semantic proprioception enables novel
-applications: efficient active learning via strategic sampling across
-density regions, interpretable concept drift monitoring through temporal
-density tracking, and multi-probe search achieving practical
-recall-speed tradeoffs (46\% recall@10 at 14× speedup).
+applications: hallucination detection through density analysis,
+efficient active learning via strategic sampling, content gap
+identification, and interpretable concept drift monitoring.
 
 \textbf{The key insight}: data can understand itself. Give it the right
 structure (LSH + Krapivin), and patterns emerge without manual
