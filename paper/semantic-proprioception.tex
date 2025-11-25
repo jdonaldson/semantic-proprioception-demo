@@ -217,7 +217,11 @@ density---finding all buckets with ≥k items requires O(n) scanning.
 Recent advances in hash table design \autocite{krapivin2025optimal}
 solve this problem. Krapivin hash tables maintain a hierarchical
 structure that enables O(1) density queries, transforming LSH from a
-search index into a \textbf{semantic awareness system}.
+search index into a \textbf{semantic awareness system}. The same
+structure supports both analysis (density-based theme discovery) and
+retrieval (multi-probe search \autocite{lv2007multiprobe} achieving 46\%
+recall@10 at 14× speedup over brute force), providing a unified
+framework for embedding space introspection and search.
 
 \subsection{Contributions}\label{contributions}
 
