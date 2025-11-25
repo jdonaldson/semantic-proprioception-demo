@@ -764,21 +764,25 @@ specific bits differ. Query complexity analysis shows bit flipping costs
 \textless6\% of query time---the real cost is similarity computation
 (70\%), which scales with candidates found.
 
-\textbf{Other directions}: - \textbf{Hallucination detection}: Initial
-experiments show LSH density detects major topic shifts (-7.9\% for
-topic drift) but struggles with subtle factual errors. Perplexity
-provides stronger signals (2-3× larger changes) across most
-hallucination types. LSH density may serve as a fast O(1) coarse filter
-for major semantic anomalies, but perplexity or retrieval-augmented
-verification is necessary for subtle hallucinations - \textbf{Content
-gap analysis}: Comparing bucket densities across corpora (e.g., user
-questions vs documentation) could identify coverage gaps, though
-validation requires domain expertise to distinguish real gaps from
-vocabulary differences - \textbf{Dynamic thresholds}: Automatically
-adjust density cutoff based on corpus statistics -
+\textbf{Other directions}: - \textbf{Density manipulation detection}:
+Krapivin levels encode insertion order, enabling detection of
+coordinated attacks that artificially inflate bucket density. Sudden
+level spikes, low level entropy, and high intra-bucket similarity could
+signal bot campaigns or spam flooding. This exploits temporal properties
+unavailable to traditional hash tables - \textbf{Hallucination
+detection}: Initial experiments show LSH density detects major topic
+shifts (-7.9\% for topic drift) but struggles with subtle factual
+errors. Perplexity provides stronger signals (2-3× larger changes)
+across most hallucination types. LSH density may serve as a fast O(1)
+coarse filter for major semantic anomalies, but perplexity or
+retrieval-augmented verification is necessary for subtle hallucinations
+- \textbf{Content gap analysis}: Comparing bucket densities across
+corpora (e.g., user questions vs documentation) could identify coverage
+gaps, though validation requires domain expertise to distinguish real
+gaps from vocabulary differences - \textbf{Dynamic thresholds}:
+Automatically adjust density cutoff based on corpus statistics -
 \textbf{Cross-lingual}: Apply to multilingual embeddings for
-language-agnostic themes - \textbf{Temporal tracking}: Monitor density
-evolution for trend analysis
+language-agnostic themes
 
 \section{Related Work}\label{related-work}
 
