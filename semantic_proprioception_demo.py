@@ -26,10 +26,15 @@ import polars as pl
 import numpy as np
 from pathlib import Path
 import sys
+from numpy.linalg import norm
+import plotly.graph_objects as go
 
 # Add krapivin-python to path
 sys.path.insert(0, str(Path(__file__).parent / "krapivin-python"))
 from lsh_parquet import load_dense_buckets_from_parquet, index_stats_from_parquet
+
+# Optimal seed from research
+OPTIMAL_SEED = 31
 
 
 # Page config
@@ -95,6 +100,133 @@ def load_model_data(model_name, dataset="twitter"):
     ]
 
     return df, lsh_index, index_stats, dense_buckets
+
+
+@st.cache_resource
+def build_search_index(df, _model, density_threshold=10):
+    """Build density-aware search index (cached)"""
+    # Extract embeddings properly - df['embedding'] is a Series of lists
+    embedding_list = df['embedding'].to_list()
+    embeddings = np.array(embedding_list)
+    d = embeddings.shape[1]
+
+    # Generate LSH hyperplanes (seed 31)
+    np.random.seed(OPTIMAL_SEED)
+    hyperplanes = np.random.randn(16, d)
+
+    # Compute LSH hashes for all documents
+    hash_bits = (embeddings @ hyperplanes.T > 0).astype(int)
+    powers = 2 ** np.arange(16)
+    hashes = hash_bits @ powers
+
+    # Build index: bucket_id -> [doc_indices]
+    index = {}
+    for i, hash_val in enumerate(hashes & 0xFF):  # Level 0: 8 bits
+        if hash_val not in index:
+            index[hash_val] = []
+        index[hash_val].append(i)
+
+    # Compute density stats
+    bucket_sizes = [len(indices) for indices in index.values()]
+    density_stats = {
+        'num_buckets': len(index),
+        'avg_size': np.mean(bucket_sizes),
+        'max_size': max(bucket_sizes),
+        'dense_buckets': sum(1 for s in bucket_sizes if s >= density_threshold),
+        'sparse_buckets': sum(1 for s in bucket_sizes if s < density_threshold),
+    }
+
+    return {
+        'embeddings': embeddings,
+        'hyperplanes': hyperplanes,
+        'hashes': hashes,
+        'index': index,
+        'density_stats': density_stats,
+        'density_threshold': density_threshold,
+    }
+
+
+def density_aware_search(query_text, model, search_index, df, k=5):
+    """
+    Density-aware semantic search
+
+    Returns: (results, search_strategy)
+    - results: List of (doc_id, similarity, title) tuples
+    - search_strategy: Dict with bucket info and refinement details
+    """
+    # Encode query
+    query_embedding = model.encode([query_text], convert_to_numpy=True)[0]
+
+    # Compute query LSH hash
+    query_hash_bits = (query_embedding @ search_index['hyperplanes'].T > 0).astype(int)
+    powers = 2 ** np.arange(16)
+    query_hash = query_hash_bits @ powers
+
+    # Level 0: 8-bit bucket
+    bucket_id = query_hash & 0xFF
+
+    strategy = {'bucket_id': bucket_id}
+
+    if bucket_id not in search_index['index']:
+        return [], {'bucket_id': bucket_id, 'status': 'empty'}
+
+    candidates = search_index['index'][bucket_id]
+    bucket_size = len(candidates)
+    strategy['bucket_size'] = bucket_size
+    strategy['original_candidates'] = bucket_size
+
+    # Adaptive refinement based on density
+    if bucket_size >= search_index['density_threshold']:
+        # Dense bucket - refine using bit slicing
+        level_1_hash = (query_hash >> 8) & 0x0F
+
+        # Filter candidates by level 1 hash
+        refined_candidates = []
+        for idx in candidates:
+            doc_level_1 = (search_index['hashes'][idx] >> 8) & 0x0F
+            if doc_level_1 == level_1_hash:
+                refined_candidates.append(idx)
+
+        strategy['status'] = 'refined'
+        strategy['level_1_hash'] = level_1_hash
+        strategy['refined_candidates'] = len(refined_candidates)
+
+        candidates = refined_candidates if len(refined_candidates) > 0 else candidates
+    else:
+        strategy['status'] = 'sparse'
+
+    # Rank candidates by cosine similarity
+    candidate_embeddings = search_index['embeddings'][candidates]
+    similarities = candidate_embeddings @ query_embedding / (
+        norm(candidate_embeddings, axis=1) * norm(query_embedding)
+    )
+
+    # Get top-k
+    top_k_indices = np.argsort(-similarities)[:k]
+
+    results = []
+    for idx in top_k_indices:
+        doc_idx = candidates[idx]
+        similarity = similarities[idx]
+
+        # Get document info (convert to dict to get scalar values)
+        doc_row = df[doc_idx].to_dicts()[0]
+
+        if 'arxiv_id' in doc_row:
+            doc_id = doc_row['arxiv_id']
+            title = doc_row['title']
+        elif 'hn_id' in doc_row:
+            doc_id = doc_row['hn_id']
+            title = doc_row['title']
+        else:
+            doc_id = doc_row['tweet_id']
+            title = doc_row['text'][:100]
+
+        results.append((doc_id, similarity, title))
+
+    strategy['final_candidates'] = len(candidates)
+
+    return results, strategy
 
 
 def get_bucket_tweets(bucket_id, lsh_index, df, dataset="twitter"):
@@ -574,44 +706,348 @@ def render_themes_tab(df, lsh_index, dense_buckets, similarity_threshold=0.5, da
                 st.caption(f"... and {len(tweets) - 8} more similar tweets")
 
 
-def render_search_tab(df, model_name):
-    """Render semantic search tab"""
-    st.header("🔎 Semantic Search")
+@st.cache_resource
+def load_embedding_model(model_name):
+    """Load sentence transformer model (cached)"""
+    from sentence_transformers import SentenceTransformer
+
+    model_ids = {
+        "MiniLM-L3": "sentence-transformers/paraphrase-MiniLM-L3-v2",
+        "MiniLM-L6": "sentence-transformers/all-MiniLM-L6-v2",
+        "MiniLM-L12": "sentence-transformers/all-MiniLM-L12-v2",
+        "MPNet-base": "sentence-transformers/all-mpnet-base-v2",
+    }
+
+    return SentenceTransformer(model_ids[model_name])
+
+
+def render_search_tab(df, model_name, dataset="twitter"):
+    """Render density-aware semantic search tab"""
+    st.header("🔎 Density-Aware Semantic Search")
 
     st.markdown("""
-    Search for similar customer support tweets. The search uses the selected
-    embedding model to find semantically similar content.
+    **Adaptive search using LSH bucket density**:
+    - Sparse buckets (< 10 docs): Returns all candidates
+    - Dense buckets (≥ 10 docs): Automatically refines using bit slicing
+
+    Search uses **seed 31** (optimal from our research) with O(1) hierarchical refinement.
     """)
 
+    # Load model
+    with st.spinner(f"Loading {model_name} model..."):
+        model = load_embedding_model(model_name)
+
+    # Build search index
+    with st.spinner("Building search index..."):
+        search_index = build_search_index(df, model, density_threshold=10)
+
+    # Show index stats
+    with st.expander("📊 Index Statistics", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Buckets", search_index['density_stats']['num_buckets'])
+            st.metric("Avg Bucket Size", f"{search_index['density_stats']['avg_size']:.1f}")
+        with col2:
+            st.metric("Dense Buckets", search_index['density_stats']['dense_buckets'])
+            st.metric("Sparse Buckets", search_index['density_stats']['sparse_buckets'])
+        with col3:
+            st.metric("Max Bucket Size", search_index['density_stats']['max_size'])
+            st.metric("Density Threshold", search_index['density_threshold'])
+
+    st.markdown("---")
+
     # Search input
+    dataset_examples = {
+        "twitter": "e.g., 'password reset problem', 'billing question', 'account locked'",
+        "arxiv": "e.g., 'neural networks', 'graph algorithms', 'quantum computing'",
+        "hackernews": "e.g., 'programming languages', 'startup advice', 'web development'"
+    }
+
     query = st.text_input(
-        "Enter a customer support query",
-        placeholder="e.g., 'password reset problem'",
-        help="Type any customer support issue to find similar tweets"
+        "Enter your search query",
+        placeholder=dataset_examples.get(dataset, "e.g., 'password reset problem'"),
+        help="The model will find semantically similar content"
     )
 
     if query:
         st.markdown("---")
 
-        # For demo, search within existing tweets
-        # In production, would embed query with model
-        st.info(f"Searching with {model_name} model...")
+        with st.spinner("Searching..."):
+            results, strategy = density_aware_search(query, model, search_index, df, k=5)
 
-        # Simple keyword search as fallback
-        query_lower = query.lower()
-        matches = df.filter(
-            pl.col("text").str.to_lowercase().str.contains(query_lower)
-        ).head(10)
-
-        if len(matches) > 0:
-            st.subheader(f"Found {len(matches)} similar tweets")
-
-            for i, row in enumerate(matches.to_dicts(), 1):
-                with st.expander(f"Result {i}"):
-                    st.markdown(f"**Tweet:** {row['text']}")
-                    st.caption(f"Tweet ID: {row['tweet_id']}")
+        # Show search strategy
+        if strategy['status'] == 'empty':
+            st.warning(f"No documents in bucket {hex(strategy['bucket_id'])}. Try a different query.")
         else:
-            st.warning("No matches found. Try a different query.")
+            # Strategy visualization
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("Bucket ID", hex(strategy['bucket_id']))
+                st.metric("Bucket Size", strategy['bucket_size'])
+
+            with col2:
+                if strategy['status'] == 'refined':
+                    st.metric("Strategy", "🔍 Dense → Refined")
+                    st.metric("Level 1 Hash", hex(strategy['level_1_hash']))
+                else:
+                    st.metric("Strategy", "📊 Sparse → Direct")
+                    st.caption("Bucket small enough, no refinement")
+
+            with col3:
+                if strategy['status'] == 'refined':
+                    st.metric("Original Candidates", strategy['original_candidates'])
+                    st.metric("After Refinement", strategy['refined_candidates'])
+                    reduction = (1 - strategy['refined_candidates'] / strategy['original_candidates']) * 100
+                    st.caption(f"Reduced by {reduction:.0f}%")
+                else:
+                    st.metric("Candidates", strategy['final_candidates'])
+
+            st.markdown("---")
+
+            # Show results
+            if results:
+                st.subheader(f"Top {len(results)} Results")
+
+                for i, (doc_id, similarity, title) in enumerate(results, 1):
+                    with st.expander(f"**#{i}** — Similarity: {similarity:.3f}", expanded=(i==1)):
+                        st.markdown(f"**{title}**")
+                        st.caption(f"Document ID: {doc_id}")
+
+                        # Show full content if available
+                        doc_row = df.filter(
+                            (pl.col('arxiv_id') == doc_id) if 'arxiv_id' in df.columns
+                            else (pl.col('hn_id') == doc_id) if 'hn_id' in df.columns
+                            else (pl.col('tweet_id') == doc_id)
+                        )
+
+                        if len(doc_row) > 0:
+                            doc = doc_row.to_dicts()[0]
+
+                            if 'abstract' in doc and doc['abstract']:
+                                st.markdown("**Abstract:**")
+                                abstract_text = str(doc['abstract'])
+                                st.markdown(abstract_text[:500] + "..." if len(abstract_text) > 500 else abstract_text)
+                            elif 'text' in doc and doc['text'] and str(doc['text']) != str(title):
+                                st.markdown(str(doc['text']))
+            else:
+                st.info("No results found after refinement. Try a different query.")
+
+
+@st.cache_data
+def load_umap_data(model_name):
+    """Load pre-computed UMAP 3D data for specific model"""
+    umap_path = Path(__file__).parent / f"umap_3d_data_{model_name}.parquet"
+    if umap_path.exists():
+        return pl.read_parquet(umap_path)
+    return None
+
+
+def render_umap_tab(df, model_name, dataset="twitter"):
+    """Render 3D UMAP visualization tab"""
+    st.markdown("### 3D UMAP Visualization of Embedding Space")
+
+    st.info("""
+    **UMAP** (Uniform Manifold Approximation and Projection) reduces high-dimensional embeddings
+    to 3D while preserving semantic structure. Points that are close in the original high-D space
+    stay close in this 3D projection.
+
+    **LSH buckets** (colored regions) partition this space. Hover over points to see their bucket assignments.
+    """)
+
+    # Load UMAP data
+    umap_df = load_umap_data(model_name)
+
+    if umap_df is None:
+        st.warning("UMAP visualization not available. Run `python test_umap_visualization.py` to generate it.")
+        return
+
+    st.success(f"Showing {len(umap_df):,} points in 3D")
+
+    # Visualization type selector
+    viz_type = st.radio(
+        "Visualization type:",
+        ["LSH Buckets", "Multi-Probe Query"],
+        horizontal=True
+    )
+
+    if viz_type == "LSH Buckets":
+        # Color by bucket density (more meaningful than bucket ID)
+        fig = go.Figure(data=[go.Scatter3d(
+            x=umap_df['x'],
+            y=umap_df['y'],
+            z=umap_df['z'],
+            mode='markers',
+            marker=dict(
+                size=3,
+                color=umap_df['bucket_size'],  # Color by density
+                colorscale='RdYlBu_r',  # Red (dense) → Yellow → Blue (sparse)
+                showscale=True,
+                colorbar=dict(title="Bucket<br>Density"),
+                line=dict(width=0),
+                cmin=1,  # Minimum bucket size
+                cmax=umap_df['bucket_size'].max(),  # Maximum bucket size
+            ),
+            text=umap_df['text'],
+            customdata=np.column_stack((umap_df['bucket'], umap_df['bucket_size'])),
+            hovertemplate='<b>Bucket:</b> %{customdata[0]}<br>' +
+                          '<b>Density:</b> %{customdata[1]} docs<br>' +
+                          '<b>Text:</b> %{text}<br>' +
+                          '<extra></extra>',
+        )])
+
+        fig.update_layout(
+            title='3D UMAP: Colored by LSH Bucket Density',
+            scene=dict(
+                xaxis_title='UMAP 1',
+                yaxis_title='UMAP 2',
+                zaxis_title='UMAP 3',
+            ),
+            height=900,
+            hovermode='closest',
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Calculate density stats
+        max_density = umap_df['bucket_size'].max()
+        min_density = umap_df['bucket_size'].min()
+        avg_density = umap_df['bucket_size'].mean()
+        dense_threshold = 10
+
+        num_dense = len([s for s in umap_df['bucket_size'] if s >= dense_threshold])
+        pct_dense = 100 * num_dense / len(umap_df)
+
+        st.markdown(f"""
+        **Density Analysis:**
+        - {len(umap_df['bucket'].unique())} unique LSH buckets
+        - Bucket sizes: {min_density} to {max_density} documents (avg: {avg_density:.1f})
+        - <span style="color:red">**Red regions**</span>: Dense buckets (many similar documents)
+        - <span style="color:blue">**Blue regions**</span>: Sparse buckets (few similar documents)
+        - {pct_dense:.1f}% of points in dense buckets (≥{dense_threshold} docs)
+
+        **What this reveals**: Dense regions indicate common themes or topics where many tweets cluster together.
+        Sparse regions represent more unique or diverse content.
+        """, unsafe_allow_html=True)
+
+    else:  # Multi-Probe Query
+        st.markdown("Enter a query to see how multi-probe LSH explores the embedding space:")
+
+        query_text = st.text_input(
+            "Query:",
+            value="my account was hacked",
+            help="Enter a search query to visualize multi-probe LSH"
+        )
+
+        if query_text:
+            # Load sentence transformer model
+            from sentence_transformers import SentenceTransformer
+
+            # Model IDs
+            model_ids = {
+                "MiniLM-L3": "sentence-transformers/paraphrase-MiniLM-L3-v2",
+                "MiniLM-L6": "sentence-transformers/all-MiniLM-L6-v2",
+                "MiniLM-L12": "sentence-transformers/all-MiniLM-L12-v2",
+                "MPNet-base": "sentence-transformers/all-mpnet-base-v2",
+            }
+
+            @st.cache_resource
+            def load_sentence_model(model_name):
+                return SentenceTransformer(model_ids[model_name])
+
+            model = load_sentence_model(model_name)
+
+            # Compute query embedding and hash
+            query_embedding = model.encode([query_text], convert_to_numpy=True)[0]
+
+            # Load hyperplanes
+            embedding_list = df['embedding'].to_list()
+            embeddings = np.array(embedding_list)
+            d = embeddings.shape[1]
+
+            np.random.seed(OPTIMAL_SEED)
+            hyperplanes = np.random.randn(16, d)
+
+            query_hash_bits = (query_embedding @ hyperplanes.T > 0).astype(int)
+            powers = 2 ** np.arange(16)
+            query_hash = query_hash_bits @ powers
+            query_bucket = query_hash & 0xFF
+
+            # Generate 2-bit flip probes
+            def flip_bits_2(bucket_id):
+                buckets = [bucket_id]
+                for bit_pos in range(8):
+                    buckets.append(bucket_id ^ (1 << bit_pos))
+                for bit_pos1 in range(8):
+                    for bit_pos2 in range(bit_pos1 + 1, 8):
+                        buckets.append(bucket_id ^ (1 << bit_pos1) ^ (1 << bit_pos2))
+                return buckets
+
+            probe_buckets = set(flip_bits_2(query_bucket))
+
+            # Assign colors
+            colors = []
+            for bucket in umap_df['bucket_int']:
+                if bucket == query_bucket:
+                    colors.append('red')
+                elif bucket in probe_buckets:
+                    colors.append('orange')
+                else:
+                    colors.append('lightgray')
+
+            # Create figure
+            fig = go.Figure()
+
+            # Add all points
+            fig.add_trace(go.Scatter3d(
+                x=umap_df['x'],
+                y=umap_df['y'],
+                z=umap_df['z'],
+                mode='markers',
+                marker=dict(
+                    size=3,
+                    color=colors,
+                    line=dict(width=0),
+                    opacity=0.6,
+                ),
+                text=umap_df['text'],
+                customdata=np.column_stack((umap_df['bucket'], umap_df['bucket_size'])),
+                hovertemplate='<b>Bucket:</b> %{customdata[0]}<br>' +
+                              '<b>Size:</b> %{customdata[1]}<br>' +
+                              '<b>Text:</b> %{text}<br>' +
+                              '<extra></extra>',
+                name='Tweets',
+            ))
+
+            fig.update_layout(
+                title=f'Multi-Probe LSH: "{query_text}"<br>' +
+                      f'<span style="color:red">■</span> Query bucket (0x{query_bucket:02x}) | ' +
+                      f'<span style="color:orange">■</span> Probed buckets ({len(probe_buckets)}) | ' +
+                      f'<span style="color:gray">■</span> Other buckets',
+                scene=dict(
+                    xaxis_title='UMAP 1',
+                    yaxis_title='UMAP 2',
+                    zaxis_title='UMAP 3',
+                ),
+                height=900,
+                showlegend=False,
+                hovermode='closest',
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Stats
+            query_bucket_size = len([b for b in umap_df['bucket_int'] if b == query_bucket])
+            probed_bucket_sizes = [len([b for b in umap_df['bucket_int'] if b == pb]) for pb in probe_buckets]
+            total_candidates = sum(probed_bucket_sizes)
+
+            st.markdown(f"""
+            **Multi-Probe Statistics:**
+            - Query bucket: `0x{query_bucket:02x}` ({query_bucket_size} documents)
+            - Probed buckets: {len(probe_buckets)} (2-bit flip)
+            - Total candidates: {total_candidates} ({100*total_candidates/len(umap_df):.1f}% of dataset)
+            - Speedup: ~{len(umap_df)/max(total_candidates, 1):.1f}× faster than brute force
+            """)
 
 
 def render_comparison_tab(metadata):
@@ -695,15 +1131,18 @@ def main():
     """)
 
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["🎯 Themes", "🔎 Search", "📊 Comparison"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🎯 Themes", "🔎 Search", "🗺️ 3D Map", "📊 Comparison"])
 
     with tab1:
         render_themes_tab(df, lsh_index, dense_buckets, similarity_threshold, dataset)
 
     with tab2:
-        render_search_tab(df, selected_model)
+        render_search_tab(df, selected_model, dataset)
 
     with tab3:
+        render_umap_tab(df, selected_model, dataset)
+
+    with tab4:
         metadata = load_model_metadata()
         render_comparison_tab(metadata)
 
