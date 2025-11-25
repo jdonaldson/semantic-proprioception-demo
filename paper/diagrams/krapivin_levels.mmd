@@ -1,0 +1,38 @@
+flowchart TB
+    subgraph Levels["Krapivin Hash Table: Hierarchical Levels"]
+        direction TB
+        L9["<b>Level 9 (Dense)</b><br/>3 buckets, avg size: 16"]
+        L8["<b>Level 8 (Dense)</b><br/>5 buckets, avg size: 12"]
+        L7["<b>Level 7 (Dense)</b><br/>8 buckets, avg size: 8"]
+        L6["<b>Level 6 (Medium)</b><br/>12 buckets, avg size: 5"]
+        L5["<b>Level 5 (Medium)</b><br/>18 buckets, avg size: 3"]
+        L4["<b>Level 4 (Medium)</b><br/>25 buckets, avg size: 2"]
+        L3["<b>Level 3 (Sparse)</b><br/>40 buckets, avg size: 1"]
+        L2["<b>Level 2 (Sparse)</b><br/>60 buckets, avg size: 1"]
+        L1["<b>Level 1 (Sparse)</b><br/>80 buckets, avg size: 1"]
+        L0["<b>Level 0 (Sparse)</b><br/>100 buckets, avg size: 1"]
+    end
+
+    Query["<b>Query: buckets with ≥5 items</b>"]
+    Result["<b>Result: O(1) access</b><br/>Directly retrieve from<br/>Levels 6-9"]
+
+    Query -.->|"Traditional: O(n) scan"| Scan["Must check all<br/>351 buckets"]
+    Query ==>|"Krapivin: O(1)"| Result
+    Result ==> L9
+    Result ==> L8
+    Result ==> L7
+    Result ==> L6
+
+    style L9 fill:#d32f2f,color:#fff
+    style L8 fill:#f44336,color:#fff
+    style L7 fill:#e57373,color:#000
+    style L6 fill:#ff9800,color:#000
+    style L5 fill:#ffb74d,color:#000
+    style L4 fill:#ffc107,color:#000
+    style L3 fill:#4caf50,color:#fff
+    style L2 fill:#66bb6a,color:#000
+    style L1 fill:#81c784,color:#000
+    style L0 fill:#a5d6a7,color:#000
+    style Query fill:#e3f2fd
+    style Result fill:#c8e6c9
+    style Scan fill:#ffebee,stroke:#c62828

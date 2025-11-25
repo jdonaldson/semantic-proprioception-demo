@@ -1,0 +1,43 @@
+flowchart TD
+    subgraph Input["Stage 1: Text Documents"]
+        T1["'Password reset not working'<br/>(tweet1.txt)"]
+        T2["'Cannot login to account'<br/>(tweet2.txt)"]
+        T3["'Deep learning for NLP'<br/>(arxiv1.txt)"]
+    end
+
+    subgraph Embedding["Stage 2: Sentence Embeddings"]
+        E1["v₁ = [0.2, -0.5, 0.8, ...]<br/>(384-d)"]
+        E2["v₂ = [0.3, -0.4, 0.9, ...]<br/>(384-d)"]
+        E3["v₃ = [-0.6, 0.7, -0.2, ...]<br/>(384-d)"]
+    end
+
+    subgraph LSH["Stage 3: LSH Hashing (fixed seed=12345)"]
+        H1["h(v₁) = 10110101 → bucket 181"]
+        H2["h(v₂) = 10110101 → bucket 181"]
+        H3["h(v₃) = 01101100 → bucket 108"]
+    end
+
+    subgraph Krapivin["Stage 4: Krapivin Hash Table"]
+        direction TB
+        L9["Level 7-9 (Dense)<br/>bucket 181: [tweet1, tweet2]<br/>count=2"]
+        L6["Level 4-6 (Medium)<br/>bucket 142: [...]"]
+        L3["Level 0-3 (Sparse)<br/>bucket 108: [arxiv1]<br/>count=1"]
+    end
+
+    Query["Query: 'buckets with ≥5 items'<br/>→ O(1) access to levels 7-9"]
+
+    T1 --> E1
+    T2 --> E2
+    T3 --> E3
+    E1 --> H1
+    E2 --> H2
+    E3 --> H3
+    H1 --> L9
+    H2 --> L9
+    H3 --> L3
+    Krapivin --> Query
+
+    style L9 fill:#ffcdd2
+    style L6 fill:#fff9c4
+    style L3 fill:#c8e6c9
+    style Query fill:#e3f2fd
