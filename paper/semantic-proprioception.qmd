@@ -235,7 +235,7 @@ Surprisingly, dense buckets show *lower* coherence in ArXiv and Hacker News. Thi
 
 **Large buckets (≥5 items)** tend to be "catch-all" buckets capturing broader semantic themes with internal variety. Example: 20 papers on "machine learning optimization" (diverse specific methods, but same general area).
 
-This validates our "prevalence not purity" framing: **density indicates frequency of a semantic pattern, not homogeneity**. Dense buckets reveal *what topics are common*, requiring human interpretation to understand *what specifically* they contain. The hierarchical LSH refinement (Future Work) addresses this by subdividing dense buckets into more coherent sub-clusters.
+This demonstrates **multi-resolution semantic awareness**: Coarse-grained LSH (8 bits) captures *prevalence* - identifying common themes across the corpus. Dense buckets signal frequent patterns but contain internal variety. **Bit slicing** (Future Work) enables hierarchical refinement to higher *purity* by subdividing dense buckets using additional hash bits (8-15). Our experiments show bit slicing achieves +0.145 coherence improvement (2.1× better than separate random hashes) with O(1) bit masking instead of O(d) re-hashing. This separation of concerns allows: (1) fast discovery of prevalent topics via density queries (Krapivin's O(1) operation), (2) targeted refinement of interesting topics via bit masking when higher precision is needed.
 
 # Applications
 
